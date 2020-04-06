@@ -1,7 +1,8 @@
 /*
  * phase3a.c
  *
- * 	This is a skeleton for phase3a.
+ * Joseph Corona : jdcorona96
+ *
  */
 
 #include <assert.h>
