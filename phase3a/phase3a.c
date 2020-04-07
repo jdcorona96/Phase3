@@ -1,8 +1,7 @@
 /*
  * phase3a.c
  *
- * Joseph Corona : jdcorona96
- *
+ * 	This is a skeleton for phase3a.
  */
 
 #include <assert.h>
@@ -316,16 +315,45 @@ static USLOSS_PTE *
 PageTableAllocateIdentity(int pages)
 {
     USLOSS_PTE  *table = NULL;
-    // allocate and initialize table here
+
+	// if not initialized, returns null
+	if(initialized) {
+		int i;
+
+		//allocates memory for each page
+		table = malloc(sizeof(USLOSS_PTE) * pages);
+		for (i = 0; i < pages; i++) {
+			
+			//sets each page's initial values
+			table[i].incore = 1;
+			table[i].read = 1;
+			table[i].write = 1;
+			table[i].frame = i;	
+		}
+	}
     return table;
 }
 
 static int
 PageTableFree(PID pid)
 {
-    int result = P1_SUCCESS;
-    // free table here
-    return result;
+	if (initialized) {	
+		
+		// invalid pid
+		if (pid < 0 || pid > P1_MAXPROC){
+			return P1_INVALID_PID;
+		}
+
+		// process does not have a page table
+		if (pageTables[pid] == NULL) {
+			return P1_INVALID_PID;
+		}
+
+		// frees page table at the given pid	
+		free(pageTables[pid]);
+		pageTables[pid] = NULL;
+	}
+    return P1_SUCCESS;
 }
 
 int P3_Startup(void *arg)
