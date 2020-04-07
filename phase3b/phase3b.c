@@ -1,5 +1,9 @@
 /*
- * phase3b.c
+ * File: phase3b.c
+ * 
+ * Authors: 
+ *		Joseph Corona | jdcorona96
+ * 		Luke Cernetic | lacernetic
  *
  */
 
@@ -15,6 +19,48 @@
 void
 P3PageFaultHandler(int type, void *arg)
 {
+	int rc;
+	int pid = P1_GetPid();
+	int i;
+	USLOSS_PTE *table;
+
+	
+	rc = USLOSS_MmuGetCause();
+	if (rc == USLOSS_MMU_FAULT){
+
+		rc = P3PageTableGet(pid, &table);
+
+		if (table == NULL) {
+			USLOSS_Console("ERROR: The current process does not have a page table.");
+			USLOSS_Halt(1);
+		}
+		else {
+			
+			// determine number of pages by dividing table size by page size.
+			int pageSize = USLOSS_MmuPageSize();
+			int numPages = sizeof(table) / pageSize;
+
+			// iterate over all pages until an empty page is found.
+			for (i = 0; i < numPages; i++){
+				if (table[i].incore == 0) {
+					break;
+				}
+			}
+
+			// fill in PTE's values
+			table[i].read = 1;
+			table[i].write = 1;
+			table[i].incore = 1;
+			table[i].frame = i;
+
+			// set table in MMU
+			rc = USLOSS_MmuSetPageTable(table);
+		}
+	}
+	else {
+		USLOSS_Console("ERROR: USLOSS_MMU_FAULT not returned.");
+		USLOSS_Halt(1);
+	}
     /*******************
 
     if the cause is USLOSS_MMU_FAULT (USLOSS_MmuGetCause)
@@ -36,7 +82,19 @@ P3PageFaultHandler(int type, void *arg)
 USLOSS_PTE *
 P3PageTableAllocateEmpty(int pages)
 {
+	//TODO: When does this return null?
     USLOSS_PTE  *table = NULL;
-    // allocate and initialize an empty page table
+
+	int i;
+	// allocates memory for each page
+	table = malloc(sizeof(USLOSS_PTE) * pages);
+	for (i = 0; i < pages; i++){
+		
+		// sets each page's initial values
+		table[i].incore = 0;
+		table[i].read = 1;
+		table[i].write = 1;
+		table[i].frame = i;
+	}
     return table;
 }
