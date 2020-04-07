@@ -37,11 +37,11 @@ P3PageFaultHandler(int type, void *arg)
 		else {
 			
 			// determine number of pages by dividing table size by page size.
-			int pageSize = USLOSS_MmuPageSize();
-			int numPages = sizeof(table) / pageSize;
+			//int pageSize = USLOSS_MmuPageSize();
+			//int numPages = sizeof(table) / pageSize;
 
 			// iterate over all pages until an empty page is found.
-			for (i = 0; i < numPages; i++){
+			for (i = 0; i < 10000/*numPages*/; i++){
 				if (table[i].incore == 0) {
 					break;
 				}
