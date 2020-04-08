@@ -21,44 +21,39 @@ P3PageFaultHandler(int type, void *arg)
 {
 	int rc;
 	int pid = P1_GetPid();
-	int i;
 	USLOSS_PTE *table;
 
-	
 	rc = USLOSS_MmuGetCause();
 	if (rc == USLOSS_MMU_FAULT){
 
 		rc = P3PageTableGet(pid, &table);
 
 		if (table == NULL) {
+
 			USLOSS_Console("ERROR: The current process does not have a page table.");
 			USLOSS_Halt(1);
 		}
 		else {
-			
+	
 			// determine number of pages by dividing table size by page size.
-			//int pageSize = USLOSS_MmuPageSize();
-			//int numPages = sizeof(table) / pageSize;
+			int pageSize = USLOSS_MmuPageSize();
+			int offset = (int) arg;
+			int errorPage = offset / pageSize;
 
-			// iterate over all pages until an empty page is found.
-			for (i = 0; i < 10000/*numPages*/; i++){
-				if (table[i].incore == 0) {
-					break;
-				}
+			// if a page fault exists
+			if (table[errorPage].incore == 0) {
+				table[errorPage].read = 1;
+				table[errorPage].write = 1;
+				table[errorPage].incore = 1;
+				table[errorPage].frame = errorPage;
+				
+				// set table in MMU
+				rc = USLOSS_MmuSetPageTable(table);
 			}
-
-			// fill in PTE's values
-			table[i].read = 1;
-			table[i].write = 1;
-			table[i].incore = 1;
-			table[i].frame = i;
-
-			// set table in MMU
-			rc = USLOSS_MmuSetPageTable(table);
 		}
 	}
 	else {
-		USLOSS_Console("ERROR: USLOSS_MMU_FAULT not returned.");
+		USLOSS_Console("No fault found.");
 		USLOSS_Halt(1);
 	}
     /*******************
