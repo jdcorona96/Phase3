@@ -1,7 +1,13 @@
 /*
- * phase3a.c
+ * Authors:
+ *			Luke Cernetic | lacernetic
+ *			Joseph Corona | jdcorona96
  *
- * 	This is a skeleton for phase3a.
+ * File: phase3a.c
+ * Purpose: This file implements the first part of our virtual memory system.
+ * Specifically, we create page tables that are statically filled with PTEs that
+ * map page x to frame x.
+ *
  */
 
 #include <assert.h>
@@ -311,6 +317,13 @@ MMUShutdown(void)
     return P1_SUCCESS;
 }
 
+/*
+* This function returns creates a page table given the number of pages via parameter
+* by allocating an array of PTEs and filling in each PTE with the correct incore, read,
+* and write bits. It also maps the specific page's frame number with its page number.
+* If the virtual memory initializer has not been called, returns NULL instead of the
+* page table.
+*/
 static USLOSS_PTE *
 PageTableAllocateIdentity(int pages)
 {
@@ -334,6 +347,10 @@ PageTableAllocateIdentity(int pages)
     return table;
 }
 
+/*
+* This function frees the page table connected with the process given via the pid.
+* If the pid is invalid or the pid does not have a page table, returns P1_INVALID_PID.
+*/
 static int
 PageTableFree(PID pid)
 {
