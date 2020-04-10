@@ -1,10 +1,12 @@
 /*
- * File: phase3b.c
- * 
  * Authors: 
- *		Joseph Corona | jdcorona96
- * 		Luke Cernetic | lacernetic
+ *			Joseph Corona | jdcorona96
+ * 			Luke Cernetic | lacernetic
  *
+ * File: phase3b.c
+ *
+ * Purpose: Instead of statically filling PTEs, PTEs are now dynamically filled
+ * and introduces a handler in case a page fault occurs.
  */
 
 #include <assert.h>
@@ -16,6 +18,10 @@
 
 #include "phase3Int.h"
 
+/*
+* This function is called when a page faults. This function updates that faulting
+* PTE so that page x is mapped to frame x if a page exists. Otherwise, calls USLOSS_HALT(1).
+*/
 void
 P3PageFaultHandler(int type, void *arg)
 {
@@ -56,31 +62,18 @@ P3PageFaultHandler(int type, void *arg)
 		USLOSS_Console("No fault found.");
 		USLOSS_Halt(1);
 	}
-    /*******************
-
-    if the cause is USLOSS_MMU_FAULT (USLOSS_MmuGetCause)
-        if the process does not have a page table  (P3PageTableGet)
-            print error message
-            USLOSS_Halt(1)
-        else
-            determine which page suffered the fault (USLOSS_MmuPageSize)
-            update the page's PTE to map page x to frame x
-            set the PTE to be read-write and incore
-            update the page table in the MMU (USLOSS_MmuSetPageTable)
-    else
-        print error message
-        USLOSS_Halt(1)
-    *********************/
-
 }
 
+/*
+* This function is very similar to P3PageTableAllocateIdentity for it does the same
+* job but now sets the incore bit to 0. 
+*/
 USLOSS_PTE *
 P3PageTableAllocateEmpty(int pages)
 {
-	//TODO: When does this return null?
     USLOSS_PTE  *table = NULL;
-
 	int i;
+
 	// allocates memory for each page
 	table = malloc(sizeof(USLOSS_PTE) * pages);
 	for (i = 0; i < pages; i++){
