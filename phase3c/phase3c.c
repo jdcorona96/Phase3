@@ -1,6 +1,9 @@
 /*
- * phase3c.c
+ * Authors: (Luke Cernetic | lacernetic) && (Joseph Corona | jdcorona96)
  *
+ * File: phase3c.c
+ *
+ * Purpose:
  */
 
 #include <assert.h>
@@ -19,6 +22,14 @@ int debugging3 = 1;
 int debugging3 = 0;
 #endif
 
+// global variables
+int isInit = 0;
+int rc;
+int i;
+int pageSize;
+int freeFramesSid;
+//
+
 void debug3(char *fmt, ...)
 {
     va_list ap;
@@ -29,9 +40,15 @@ void debug3(char *fmt, ...)
     }
 }
 
-// This allows the skeleton code to compile. Remove it in your solution.
+void kernelMode(void){
+	int psr = USLOSS_PsrGet();
 
-#define UNUSED __attribute__((unused))
+	if (!(psr & USLOSS_PSR_CURRENT_MODE)) {
+		USLOSS_IllegalInstruciton();
+	}
+}
+
+// This allows the skeleton code to compile. Remove it in your solution.
 
 /*
  *----------------------------------------------------------------------
@@ -46,15 +63,41 @@ void debug3(char *fmt, ...)
  *
  *----------------------------------------------------------------------
  */
+
+struct Frame {
+	int pid;
+	int page;
+};
+
+struct Frame *frameTable;
+
 int
 P3FrameInit(int pages, int frames)
 {
-    int result = P1_SUCCESS;
+	kernelMode();
+	
+	pageSize = pages;
 
-    // initialize the frame data structures, e.g. the pool of free frames
-    // set P3_vmStats.freeFrames
+	if (isInit == 1) {
+		return P3_ALREADY_INITIALIZED;
+	}
 
-    return result;
+	// initialize the frame data structures, e.g. the pool of free frames
+	frameTable = malloc(sizeof(struct Frame) *frames);
+	for (i = 0; i < frames; i++){
+		frameTable[i].pid = -1;
+		frameTable[i].page = -1;
+	}
+	
+	// creates a semaphore for freeFrames so that two pagers cannot access it at the same time.
+	rc = P1_SemCreate("freeFrames", 0, &freeFramesSid);
+	assert(rc == P1_SUCCESS);
+
+	// sets values of P3_VmStats
+	P3_VmStats.frames = frames;
+	P3_VmStats.freeFrames = frames;
+    
+    return P1_SUCCESS;
 }
 /*
  *----------------------------------------------------------------------
@@ -72,11 +115,19 @@ P3FrameInit(int pages, int frames)
 int
 P3FrameShutdown(void)
 {
-    int result = P1_SUCCESS;
+	kernelMode();
 
-    // clean things up
+	if (isInit == 0) {
+		return P3_NOT_INITIALIZED;
+	}
 
-    return result;
+	free(frameTable);
+	frameTable = NULL;
+
+	rc = P1_SemFree(freeFramesSid);
+	assert(rc == P1_SUCCESS);
+
+    return P1_SUCCESS;
 }
 
 /*
@@ -96,11 +147,27 @@ P3FrameShutdown(void)
 int
 P3FrameFreeAll(int pid)
 {
-    int result = P1_SUCCESS;
+	kernelMode();
 
-    // free all frames in use by the process (P3PageTableGet)
+	// get the page table
+	PTE **pageTable;
+	rc = P3PageTableGet(pid, pageTable);
+	assert(rc == P1_SUCCESS);
 
-    return result;
+	i = 0;
+
+	// iterate over all pages in the page table
+	for (i = 0; i < pageSize; i++){
+		
+		// if the page has a frame, remove the frame and free it in frameTable
+		if(pageTable[i].incore == 1) {
+			pageTable[i].incore = 0;
+			frameTable[pageTable[i].frame].pid = -1;
+			frameTable[pageTable[i].frame].page = -1;
+		}
+	}
+
+    return P1_SUCCESS;
 }
 
 /*
@@ -121,14 +188,52 @@ P3FrameFreeAll(int pid)
 int
 P3FrameMap(int frame, void **ptr) 
 {
-    int result = P1_SUCCESS;
+	kernelMode();
+	if (isInit == 0){
+		return P3_NOT_INITIALIZED;
+	}
 
-    // get the page table for the process (P3PageTableGet)
-    // find an unused page
-    // update the page's PTE to map the page to the frame
-    // update the page table in the MMU (USLOSS_MmuSetPageTable)
+	if (frame < 0 || frame > P3_VmStats.frames) {
+		return P1_INVALID_FRAME;
+	}
 
-    return result;
+	// get the page table for the process (P3PageTableGet)
+	PTE **pageTable;
+	rc = P3PageTableGet(pid, pageTable);
+	assert(rc == P1_SUCCESS);
+
+	int flag = 0;
+
+	for (i = 0; i < pageSize; i++) {
+		
+		// update the page's PTE to map the page to the frame
+		if (pageTable[i].incore == 0) {
+			flag = 1;
+			pageTable[i].incore = 1;
+			pageTable[i].frame = frame;
+			break;
+		}
+	}
+	
+	if (flag == 0){
+		return P3_OUT_OF_PAGES;
+	}
+	
+	// update the page table in the MMU (USLOSS_MmuSetPageTable)
+	int numPages;
+	void *VMaddress;
+	VMaddress = USLOSS_MmuRegion(&numPages);
+
+	rc = USLOSS_MmuSetPageTable(pageTable);
+	assert(rc == USLOSS_MMU_OK);
+
+
+	//TODO:
+	// do we need to apply semaphore? No becuase its chchecked in pager and pager calls this?
+	// do we need to adjust free frame array?
+	// probably didn't set page table correctly, didn't return pointer
+    
+    return P1_SUCCESS;
 }
 /*
  *----------------------------------------------------------------------
@@ -148,14 +253,48 @@ P3FrameMap(int frame, void **ptr)
 int
 P3FrameUnmap(int frame) 
 {
-    int result = P1_SUCCESS;
+	kernelMode();
+	if (isInit == 0){
+		return P3_NOT_INITIALIZED;
+	}
 
-    // get the process's page table (P3PageTableGet)
-    // verify that the process mapped the frame
-    // update page's PTE to remove the mapping
-    // update the page table in the MMU (USLOSS_MmuSetPageTable)
+	if (frame < 0 || frame > P3_VmStats.frames) {
+		return P1_INVALID_FRAME;
+	}
 
-    return result;
+	// get the page table for the process (P3PageTableGet)
+	PTE **pageTable;
+	rc = P3PageTableGet(pid, pageTable);
+	assert(rc == P1_SUCCESS);
+
+	int flag = 0;
+
+	for (i = 0; i < pageSize; i++) {
+		
+		// update the page's PTE to unmap the page to the frame
+		if (pageTable[i].incore == 1 && pageTable[i].frame = frame) {
+			flag = 1;
+			pageTable[i].incore = 0;
+			pageTable[i].frame = NULL;
+			break;
+		}
+	}
+	
+	if (flag == 0){
+		return P3_FRAME_NOT_MAPPED;
+	}
+	
+	// update the page table in the MMU (USLOSS_MmuSetPageTable)
+	int numPages;
+	void *VMaddress;
+	VMaddress = USLOSS_MmuRegion(&numPages);
+
+	rc = USLOSS_MmuSetPageTable(pageTable);
+	assert(rc == USLOSS_MMU_OK);
+
+    return P1_SUCCESS;
+
+	//TODO: FIX MMU PAGE TABLE
 }
 
 // information about a fault. Add to this as necessary.
