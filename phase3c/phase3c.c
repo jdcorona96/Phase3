@@ -24,10 +24,21 @@ int debugging3 = 0;
 
 // global variables
 int isInit = 0;
+int isInitPager = 0;
 int rc;
 int i;
 int pageSize;
 int freeFramesSid;
+int faultListSid;
+int pagersStatSid;
+FaultList *head;
+
+int numPagers = 0;
+int pagerPids[P3_MAX_PAGERS];
+
+int faults = 0;
+
+
 //
 
 void debug3(char *fmt, ...)
@@ -219,20 +230,15 @@ P3FrameMap(int frame, void **ptr)
 		return P3_OUT_OF_PAGES;
 	}
 	
+	rc = USLOSS_MmuSetPageTable(pageTable);
+	assert(rc == USLOSS_MMU_OK);
+
 	// update the page table in the MMU (USLOSS_MmuSetPageTable)
 	int numPages;
 	void *VMaddress;
 	VMaddress = USLOSS_MmuRegion(&numPages);
+	ptr = VMaddress[sizeof(struct USLOSS_PTE) * i];
 
-	rc = USLOSS_MmuSetPageTable(pageTable);
-	assert(rc == USLOSS_MMU_OK);
-
-
-	//TODO:
-	// do we need to apply semaphore? No becuase its chchecked in pager and pager calls this?
-	// do we need to adjust free frame array?
-	// probably didn't set page table correctly, didn't return pointer
-    
     return P1_SUCCESS;
 }
 /*
@@ -257,6 +263,7 @@ P3FrameUnmap(int frame)
 	if (isInit == 0){
 		return P3_NOT_INITIALIZED;
 	}
+	isInit = 1;
 
 	if (frame < 0 || frame > P3_VmStats.frames) {
 		return P1_INVALID_FRAME;
@@ -283,18 +290,12 @@ P3FrameUnmap(int frame)
 	if (flag == 0){
 		return P3_FRAME_NOT_MAPPED;
 	}
-	
-	// update the page table in the MMU (USLOSS_MmuSetPageTable)
-	int numPages;
-	void *VMaddress;
-	VMaddress = USLOSS_MmuRegion(&numPages);
 
+	//update page table in MMU
 	rc = USLOSS_MmuSetPageTable(pageTable);
 	assert(rc == USLOSS_MMU_OK);
 
     return P1_SUCCESS;
-
-	//TODO: FIX MMU PAGE TABLE
 }
 
 // information about a fault. Add to this as necessary.
@@ -322,18 +323,41 @@ static void
 FaultHandler(int type, void *arg)
 {
     Fault   fault UNUSED;
-
+    
+	// fill in other fields in fault
     fault.offset = (int) arg;
-    // fill in other fields in fault
-    // add to queue of pending faults
-    // let pagers know there is a pending fault
-    // wait for fault to be handled
+	fault.pid = P1_GetPid();
+	fault.cause = USLOSS_MmuGetCause();
+	fault.wait = faultListSid; 
 
-    // kill off faulting process so skeleton code doesn't hang
-    // delete this in your solution
-    P2_Terminate(42);
+	FaultList newFault = malloc(sizeof(FaultList));
+	newFault.fault = fault;
+	
+    // add to queue of pending faults
+	P1_P(faultListSid);
+	if (head == NULL){
+		head = newFault;
+	}
+	else {
+		FaultList curr = head;
+		while (curr->next != NULL){
+			curr = curr->next;		
+		}
+		curr->next = newFault;
+	}
+	P1_V(faultListSid);
+
+    // let pagers know there is a pending fault
+	faults++;
+	
+	// wait for fault to be handled
+
 }
 
+struct FaultList {
+	Fault fault;
+	FaultList *next;
+};
 
 /*
  *----------------------------------------------------------------------
@@ -352,14 +376,37 @@ FaultHandler(int type, void *arg)
 int
 P3PagerInit(int pages, int frames, int pagers)
 {
-    int     result = P1_SUCCESS;
+	if (isInitPager == 1){
+		return P3_ALREADY_INITIALIZED;
+	}
+	isInitPager = 1;
+
+	if (pagers < 1 || pagers > P3_MAX_PAGERS){
+		return P3_INVALID_NUM_PAGERS;
+	}
+	
+	// initialize the pager data structure
+	head = NULL;
 
     USLOSS_IntVec[USLOSS_MMU_INT] = FaultHandler;
 
-    // initialize the pager data structures
-    // fork off the pagers and wait for them to start running
+	// creates semaphore for faultList
+	rc = P1_SemCreate("faultList", 1, &faultListSid);
+	assert(rc == P1_SUCCESS);
 
-    return result;
+	// creates semaphore for pagerStatsSid
+	rc = P1_SemCreate("pagerStats", 1, &pagerStatsSid);
+	assert(rc == P1_SUCCESS);
+
+	// forks off the pagers
+	for (i = 0; i < pagers; i++){
+		numPagers++;
+		char *name = (char*) malloc(sizeof(char) * 7);
+		sprintf(name, "pager%d\0", i);
+		P1_Fork(name, static int (*Pager)(void *), NULL, USLOSS_MIN_STACK, P3_PAGER_PRIORITY, 0, pagerPids + i);
+	}
+
+    return P1_SUCCESS;
 }
 
 /*
@@ -378,12 +425,34 @@ P3PagerInit(int pages, int frames, int pagers)
 int
 P3PagerShutdown(void)
 {
-    int result = P1_SUCCESS;
-
-    // cause the pagers to quit
+	if (isInitPager == 0){
+		return P3_NOT_INITIALIZED;
+	}
+	
     // clean up the pager data structures
+	FaultList curr = head;
+	while (curr != NULL){
+		FaultList next = curr->next;
+		free(curr);
+		curr = next;
+	}
 
-    return result;
+	//TODO:
+    // cause the pagers to quit
+	for (i = 0; i < numPagers; i++){
+
+	}
+
+	// free the semaphores created in PagerInit
+	rc = P1_SemFree(faultListSid);
+	assert(rc == P1_SUCCESS);
+
+	rc = P1_SemFree(pagersStatSid);
+	assert(rc == P1_SUCCESS);
+
+
+
+    return P1_SUCCESS;
 }
 
 /*
@@ -399,6 +468,11 @@ P3PagerShutdown(void)
 static int
 Pager(void *arg)
 {
+	
+
+
+
+
     /********************************
 
     notify P3PagerInit that we are running
