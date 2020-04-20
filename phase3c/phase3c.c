@@ -220,9 +220,9 @@ P3FrameMap(int frame, void **ptr)
 	}
 
 	// get the page table for the process (P3PageTableGet)
-	USLOSS_PTE **pageTable = NULL;
+	USLOSS_PTE *pageTable;
 	int pid = P1_GetPid();
-	rc = P3PageTableGet(pid, pageTable);
+	rc = P3PageTableGet(pid, &pageTable);
 	assert(rc == P1_SUCCESS);
 
 	int flag = 0;
@@ -230,10 +230,10 @@ P3FrameMap(int frame, void **ptr)
 	for (i = 0; i < pageSize; i++) {
 		
 		// update the page's PTE to map the page to the frame
-		if (pageTable[i]->incore == 0) {
+		if (pageTable->incore == 0) {
 			flag = 1;
-			pageTable[i]->incore = 1;
-			pageTable[i]->frame = frame;
+			pageTable->incore = 1;
+			pageTable->frame = frame;
 			break;
 		}
 	}
@@ -242,17 +242,15 @@ P3FrameMap(int frame, void **ptr)
 		return P3_OUT_OF_PAGES;
 	}
 	
-	rc = USLOSS_MmuSetPageTable(*pageTable);
+	rc = USLOSS_MmuSetPageTable(pageTable);
 	assert(rc == USLOSS_MMU_OK);
-
 	// update the page table in the MMU (USLOSS_MmuSetPageTable)
-	int numPages;
+	
+    int numPages;
 	void *VMaddress;
 	VMaddress = USLOSS_MmuRegion(&numPages);
 
-	void **pointer = malloc(sizeof(void **));
-	*pointer = (VMaddress + (sizeof(USLOSS_PTE) * i));
-	ptr = pointer;
+	*ptr = VMaddress + (sizeof(USLOSS_PTE) * i);
 //	ptr = &(VMaddress + (sizeof(USLOSS_PTE) * i));
 
     return P1_SUCCESS;
@@ -536,6 +534,10 @@ Pager(void *arg)
 		//TODO: semaphores for freeframe and maybe more?
 		int currFrame;
 		if (P3_vmStats.freeFrames > 0){
+
+            P1_P(freeFramesSid);
+            P3_vmStats.freeFrame -= 1;
+            P1_V(freeFramesSid);
 			for (i = 0; i < P3_vmStats.frames; i++){
 				if (frameTable[i].pid == -1){
 					currFrame = i;
@@ -546,19 +548,21 @@ Pager(void *arg)
 			rc = P3SwapOut(&currFrame);
 			assert(rc == P1_SUCCESS);
 		}
-		
-		rc = P3SwapIn(currFault.pid, currFault.offset, currFrame);
+	
+        int faultPage = currFault.offset / USLOSS_MmuPageSize();
 
-		struct USLOSS_PTE **addr = NULL;
+		rc = P3SwapIn(currFault.pid, faultPage, currFrame);
+
+		struct USLOSS_PTE *addr;
 		if (rc == P3_EMPTY_PAGE){
-			rc = P3FrameMap(currFrame, (void**) addr);
+			rc = P3FrameMap(currFrame, (void**) &addr);
 			assert(rc == P1_SUCCESS);
 
 			//zero-out frame at addr
-			(*addr)->incore = 0;
-			(*addr)->read = 0;
-			(*addr)->write = 0;
-			(*addr)->frame = 0;
+			addr->incore = 0;
+			addr->read = 0;
+			addr->write = 0;
+			addr->frame = 0;
 			rc = P3FrameUnmap(currFrame);
 			assert(rc == P1_SUCCESS);
 		}
@@ -570,10 +574,10 @@ Pager(void *arg)
 		}
 
 		//update PTE in faulting process's page table to map page to frame
-		(*addr)->incore = 1;
-		(*addr)->read = 1;
-		(*addr)->write = 1;
-		(*addr)->frame = currFrame;
+		addr->incore = 1;
+		addr->read = 1;
+		addr->write = 1;
+		addr->frame = currFrame;
 
 		// unblock faulting process
 
