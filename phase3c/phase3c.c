@@ -96,6 +96,8 @@ P3FrameInit(int pages, int frames)
 		return P3_ALREADY_INITIALIZED;
 	}
 
+    isInit = 1;
+
 	// initialize the frame data structures, e.g. the pool of free frames
 	frameTable = malloc(sizeof(struct Frame) *frames);
 	for (i = 0; i < frames; i++){
@@ -162,6 +164,12 @@ int
 P3FrameFreeAll(int pid)
 {
 	kernelMode();
+
+    if (!isInit)
+        return P3_NOT_INITIALIZED;
+    
+    if (pid < 0 || pid >= P1_MAXPROC)
+        return P1_INVALID_PID;
 
 	// get the page table
 	USLOSS_PTE **pageTable = NULL;
@@ -271,7 +279,6 @@ P3FrameUnmap(int frame)
 	if (isInit == 0){
 		return P3_NOT_INITIALIZED;
 	}
-	isInit = 1;
 
 	if (frame < 0 || frame > P3_vmStats.frames) {
 		return P3_INVALID_FRAME;
