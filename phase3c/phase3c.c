@@ -535,9 +535,11 @@ Pager(void *arg)
 		int currFrame;
 		if (P3_vmStats.freeFrames > 0){
 
-            P1_P(freeFramesSid);
-            P3_vmStats.freeFrame -= 1;
-            P1_V(freeFramesSid);
+            rc = P1_P(freeFramesSid);
+            assert(rc == P1_SUCCESS);
+            P3_vmStats.freeFrames -= 1;
+            rc = P1_V(freeFramesSid);
+            assert(rc == P1_SUCCESS);
 			for (i = 0; i < P3_vmStats.frames; i++){
 				if (frameTable[i].pid == -1){
 					currFrame = i;
