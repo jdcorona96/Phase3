@@ -55,6 +55,53 @@ static void debug3(char *fmt, ...)
     }
 }
 
+///////////// Data structures ///////////////////////////
+
+//swap space data structure & sempaphore
+//clock hand sempahore
+//frame busy flag
+//pager's page table semaphore
+
+typedef struct SwapSpace {
+    
+    int pid;
+    int page;
+    int track;
+    int sector;
+
+} SwapSpace;
+
+int swapTableSem;
+
+SwapSpace *swapTable;
+
+int clockHand;
+int hand = -1;
+
+typedef struct Frame {
+    
+    int inDisk;
+    int track;
+    int sector;
+    int free;
+    int busy;
+
+} Frame;
+
+Frame *frameTable;
+
+int pageTableSem;
+
+int initialized = 0;
+int rc;
+int i;
+
+int sectorByte;
+int sectorNum;
+int trackNum;
+
+/////////////////////////////////////////////////////////
+
 /*
  *----------------------------------------------------------------------
  *
@@ -71,11 +118,28 @@ static void debug3(char *fmt, ...)
 int
 P3SwapInit(int pages, int frames)
 {
-    int result = P1_SUCCESS;
+
+    if (initialized)
+        return P3_ALREADY_INITIALIZED;
+
+    initialized = 1;
 
     // initialize the swap data structures, e.g. the pool of free blocks
+    rc = P2_DiskSize(P3_SWAP_DISK, &sectorByte, &sectorNum, &trackNum);
+    assert(rc == P1_SUCCESS);
 
-    return result;
+    swapTable = (SwapSpace*) malloc(sizeof(SwapSpace) * sectorNum * trackNum);
+
+    rc = P1_SemCreate("Swap Table", 1, &swapTableSem);
+    
+    rc = P1_SemCreate("Clock Hand", 1, &clockHand);
+    assert(rc == P1_SUCCESS);
+
+    frameTable = (Frame*) malloc(sizeof(Frame) * frames);
+
+    rc = P1_SemCreate("Page Table", 1, &pageTableSem);
+
+    return P1_SUCCESS;
 }
 /*
  *----------------------------------------------------------------------
@@ -93,11 +157,25 @@ P3SwapInit(int pages, int frames)
 int
 P3SwapShutdown(void)
 {
-    int result = P1_SUCCESS;
+    if (!initialized)
+        return P3_NOT_INITIALIZED;
+
+    free(swapTable);
+    
+    rc = P1_SemFree(swapTableSem);
+    assert(rc == P1_SUCCESS);
+
+    rc = P1_SemFree(clockHand);
+    assert(rc == P1_SUCCESS);
+
+    free(frameTable);
+
+    rc = P1_SemFree(pageTableSem);
+    assert(rc == P1_SUCCESS);
 
     // clean things up
 
-    return result;
+    return P1_SUCCESS;
 }
 
 /*
@@ -117,18 +195,32 @@ P3SwapShutdown(void)
 int
 P3SwapFreeAll(int pid)
 {
-    int result = P1_SUCCESS;
 
-    /*****************
+    if (!initialized)
+        return P3_NOT_INITIALIZED;
 
-    P(mutex)
-    free all swap space used by the process
-    V(mutex)
+    if (pid < 0 || pid >= P1_MAXPROC)
+        return P1_INVALID_PID;
 
-    *****************/
+    //P(mutex)
+    rc = P1_P(swapTableSem);
+    assert(rc == P1_SUCCESS);
+    
+    //free all swap space used by the process
+    for (i = 0; i < sectorNum * trackNum ;i++) {
+        if (swapTable[i].pid == pid) {
+            
+            swapTable[i].pid  = -1;
+            swapTable[i].page = -1;
+        }
+    }
+    
+    //V(mutex)
+    rc = P1_V(swapTableSem);
+    assert(rc == P1_SUCCESS);
 
 
-    return result;
+    return P1_SUCCESS;
 }
 
 /*
@@ -149,14 +241,44 @@ P3SwapFreeAll(int pid)
 int
 P3SwapOut(int *frame) 
 {
-    int result = P1_SUCCESS;
 
+    int target;
+    int access;
+    if (!initialized)
+        return P3_NOT_INITALIZED;
+
+
+    rc = P1_P(clockHand);
+    assert(rc == P1_SUCCESS);
+
+    while(1) {
+        
+        hand = (hand +1) % P3_vmStats.frames;
+        if (!frameTable[hand].busy) {
+            frameTable[hand].busy = 1;
+            rc = USLOSS_MmuGetAccess(hand,&access);
+            assert(rc == USLOSS_MMU_OK);
+            if (access != USLOSS_MMU_REF) {
+                target = hand;
+                break;
+            } else {
+                rc = USLOSS_MmuSetAccess(hand, USLOSS_MMU_DIRTY);
+                assert(rc == USLOSS_MMU_OK);
+            }
+        }
+    } // while
+
+    rc = USLOSS_MmuGetAccess(target,&access);
+    assert(rc == USLOSS_MMU_OK);
+    if (access == USLOSS_MMU_DIRTY) {
+        rc = P3_FrameMap(target
+    }
+    
     /*****************
 
     NOTE: in the pseudo-code below I used the notation frames[x] to indicate frame x. You 
     may or may not have an actual array with this name. As with all my pseudo-code feel free
     to ignore it.
-
 
     static int hand = -1;    // start with frame 0
     P(mutex)
@@ -178,7 +300,9 @@ P3SwapOut(int *frame)
 
     *****************/
 
-    return result;
+    
+
+    return P1_SUCCESS;
 }
 /*
  *----------------------------------------------------------------------
