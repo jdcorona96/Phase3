@@ -66,8 +66,7 @@ typedef struct SwapSpace {
     
     int pid;
     int page;
-    int track;
-    int sector;
+    int allocated;
 
 } SwapSpace;
 
@@ -100,6 +99,8 @@ int sectorByte;
 int sectorNum;
 int trackNum;
 
+int pagesNum;
+int framesNum;
 /////////////////////////////////////////////////////////
 
 /*
@@ -124,11 +125,19 @@ P3SwapInit(int pages, int frames)
 
     initialized = 1;
 
+    pagesNum = pages;
+    framesNum = frames;
+
     // initialize the swap data structures, e.g. the pool of free blocks
     rc = P2_DiskSize(P3_SWAP_DISK, &sectorByte, &sectorNum, &trackNum);
     assert(rc == P1_SUCCESS);
 
     swapTable = (SwapSpace*) malloc(sizeof(SwapSpace) * sectorNum * trackNum);
+    for (i = 0; i < sectorNum * trackNum; i++) {
+        swapTable[i].pid = -1;
+        swapTable[i].page = -1;
+        swapTable[i].allocated = 0;
+    }
 
     rc = P1_SemCreate("Swap Table", 1, &swapTableSem);
     
@@ -212,6 +221,7 @@ P3SwapFreeAll(int pid)
             
             swapTable[i].pid  = -1;
             swapTable[i].page = -1;
+            swapTable[i].allocated = -1;
         }
     }
     
@@ -245,7 +255,7 @@ P3SwapOut(int *frame)
     int target;
     int access;
     if (!initialized)
-        return P3_NOT_INITALIZED;
+        return P3_NOT_INITIALIZED;
 
 
     rc = P1_P(clockHand);
@@ -271,9 +281,58 @@ P3SwapOut(int *frame)
     rc = USLOSS_MmuGetAccess(target,&access);
     assert(rc == USLOSS_MMU_OK);
     if (access == USLOSS_MMU_DIRTY) {
-        rc = P3_FrameMap(target
+
+        void *addr;
+        rc = P3FrameMap(target,&addr);
+        assert(rc == P1_SUCCESS);
+
+        // TODO: will need to check if right
+        for (i = 0; i < sectorNum * trackNum ;i++) {
+            if (swapTable[i].pid == -1) {
+                
+                int process = P1_GetPid();
+                swapTable[i].pid = process;
+                // TODO office hours waiting asnwer
+                // swaptTable[i].page = page???
+                
+                swapTable[i].allocated = 1;
+            }
+        }
+        rc = P2_DiskWrite(P3_SWAP_DISK, i / trackNum, i % sectorNum, 1, addr);
+        assert(rc == P1_SUCCESS);
+
+        rc = P3FrameUnmap(target);
+        assert(rc == P1_SUCCESS);
+
+        rc = USLOSS_MmuSetAccess(target, USLOSS_MMU_DIRTY);
+        assert(rc == USLOSS_MMU_OK);
+
     }
-    
+
+
+    int process = P1_GetPid();
+    USLOSS_PTE *pageTable;
+    rc = P3PageTableGet(process, &pageTable);
+    assert(rc == P1_SUCCESS);
+
+    for (i = 0; i < pagesNum; i++) {
+        if (pageTable[i].frame == target) {
+
+            pageTable[i].incore = 0;
+            // pageTable[i].frame = -1;
+            break;
+        }
+    }
+
+    rc = P3PageTableSet(process, pageTable);
+    assert(rc == P1_SUCCESS);
+
+    frameTable[target].busy = 1;
+    rc = P1_V(clockHand);
+    assert(rc == P1_SUCCESS);
+    *frame = target;
+
+
     /*****************
 
     NOTE: in the pseudo-code below I used the notation frames[x] to indicate frame x. You 
@@ -283,7 +342,8 @@ P3SwapOut(int *frame)
     static int hand = -1;    // start with frame 0
     P(mutex)
     loop
-        hand = (hand + 1) % # of frames
+     
+    hand = (hand + 1) % # of frames
         if frames[hand] is not busy
             if frames[hand] hasn't been referenced (USLOSS_MmuGetAccess)
                 target = hand
@@ -325,7 +385,69 @@ P3SwapOut(int *frame)
 int
 P3SwapIn(int pid, int page, int frame)
 {
+
     int result = P1_SUCCESS;
+
+    if (!initialized)
+        return P3_NOT_INITIALIZED;
+
+    if (pid < 0 || pid >= P1_MAXPROC)
+        return P1_INVALID_PID;
+
+    if (page < 0 || page >= pagesNum)
+        return P3_INVALID_PAGE;
+
+    if (frame < 0 || frame >= framesNum)
+        return P3_INVALID_FRAME;
+
+
+    rc = P1_P(swapTableSem);
+    assert(rc == P1_SUCCESS);
+
+    int flag = 0;
+
+    for (i = 0; i < trackNum * sectorNum; i++) {
+        if (swapTable[i].pid == pid &&
+                swapTable[i].page == page) {
+            
+
+            void* addr;
+            rc = P3FrameMap(frame,&addr);
+            assert(rc == P1_SUCCESS);
+
+            rc = P2_DiskRead(P3_SWAP_DISK, i / trackNum, i % sectorNum, 1, addr);
+            assert(rc == P1_SUCCESS);
+
+            rc = P3FrameUnmap(frame);
+            assert(rc == P1_SUCCESS);
+            flag = 1;
+            break;
+        }
+    }
+
+    if (!flag) {
+
+        // TODO: how to allocate?
+        for (i = 0 ; i < trackNum * sectorNum; i++) {
+            if (swapTable[i].pid == -1) {
+                
+                swapTable[i].pid = pid;
+                swapTable[i].page = page;
+                swapTable[i].allocated = 0;
+                result =  P3_EMPTY_PAGE;
+            }
+
+        }
+
+        result = P3_OUT_OF_SWAP;
+
+    }
+
+    frameTable[frame].busy = 0;
+    
+    rc = P1_V(swapTableSem);
+    assert(rc == P1_SUCCESS);
+
 
     /*****************
 
