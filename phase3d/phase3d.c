@@ -126,11 +126,11 @@ int getTrack(int);
  */
 
 int getSector(int i) {
-    return (sectorInPage * i) / sectorNum;
+    return (sectorInPage * i) & sectorNum;
 }
 
 int getTrack(int i) {
-    return (sectorInPage * i) % sectorNum;
+    return (sectorInPage * i) / sectorNum;
 }
 
 /*
@@ -334,13 +334,16 @@ P3SwapOut(int *frame)
         if (!frameTable[hand].busy) {
             rc = USLOSS_MmuGetAccess(hand,&access);
             assert(rc == USLOSS_MMU_OK);
-            if (access != USLOSS_MMU_REF) {
+
+            int bit = access & USLOSS_MMU_REF;
+            if (!bit) {
                 
                 frameTable[hand].busy = 1;
                 target = hand;
                 break;
             } else {
-                rc = USLOSS_MmuSetAccess(hand, USLOSS_MMU_DIRTY);
+                access &= ~USLOSS_MMU_REF;
+                rc = USLOSS_MmuSetAccess(hand, access);
                 assert(rc == USLOSS_MMU_OK);
             }
         }
@@ -351,7 +354,7 @@ P3SwapOut(int *frame)
 
     rc = USLOSS_MmuGetAccess(target,&access);
     assert(rc == USLOSS_MMU_OK);
-    if (access == USLOSS_MMU_DIRTY) {
+    if (access & USLOSS_MMU_DIRTY) {
 
         for (i = 0; i < swapTableSize; i++) {
             if (swapTable[i].pid == pid &&
@@ -378,6 +381,7 @@ P3SwapOut(int *frame)
                 rc = P1_V(vmStats);
                 assert(rc == P1_SUCCESS);
  
+                access = access & ~USLOSS_MMU_DIRTY;
                 rc = USLOSS_MmuSetAccess(target, USLOSS_MMU_DIRTY);
                 assert(rc == USLOSS_MMU_OK);
 
@@ -511,14 +515,15 @@ P3SwapIn(int pid, int page, int frame)
 
         if (!found) {
 
-            if (P3_vmStats.freeBlocks <= 0) {
+            if (P3_vmStats.freeBlocks > 0) {
 
                 for (i = 0 ; i < swapTableSize; i++) {
                     if (swapTable[i].pid == -1) {
                 
-                        swapTable[i].pid = pid;
-                        swapTable[i].page = page;
+                        swapTable[i].pid       = pid;
+                        swapTable[i].page      = page;
                         swapTable[i].allocated = 0;
+                        
                         result =  P3_EMPTY_PAGE;
 
                         rc = P1_P(vmStats);
@@ -528,6 +533,7 @@ P3SwapIn(int pid, int page, int frame)
 
                         rc = P1_V(vmStats);
                         assert(rc == P1_SUCCESS);
+                        break;
                     }   
                 }
 
