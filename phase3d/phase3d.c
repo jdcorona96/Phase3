@@ -36,6 +36,8 @@ disk I/O.
 #include <string.h>
 #include <libuser.h>
 
+#define DEBUG 1
+
 #include "phase3.h"
 #include "phase3Int.h"
 
@@ -111,6 +113,8 @@ int framesNum;
 
 int getSector(int);
 int getTrack(int);
+void printSwapTable(void);
+void printFrameTable(void);
 
 //////////////////////////////////////////////////////////
 /*
@@ -126,7 +130,7 @@ int getTrack(int);
  */
 
 int getSector(int i) {
-    return (sectorInPage * i) & sectorNum;
+    return (sectorInPage * i) % sectorNum;
 }
 
 int getTrack(int i) {
@@ -202,7 +206,7 @@ P3SwapInit(int pages, int frames)
     P3_vmStats.freeBlocks = swapTableSize;
     P3_vmStats.pageIns  = 0;
     P3_vmStats.pageOuts = 0;
-    P3_vmStats.replaced = 0;
+    //P3_vmStats.replaced = 0;
 
     rc = P1_V(vmStats);
     assert(rc == P1_SUCCESS);
@@ -297,6 +301,23 @@ P3SwapFreeAll(int pid)
     rc = P1_V(swapTableSem);
     assert(rc == P1_SUCCESS);
 
+    rc = P1_P(frameTableSem);
+    assert(rc == P1_SUCCESS);
+
+    for (i = 0; i < framesNum; i++) {
+
+        if(frameTable[i].pid == pid) {
+
+            frameTable[i].pid = -1;
+            frameTable[i].page = -1;
+            frameTable[i].busy = 0;
+        }
+
+    }
+
+    rc = P1_V(frameTableSem);
+    assert(rc == P1_SUCCESS);
+
     return P1_SUCCESS;
 }
 
@@ -363,9 +384,17 @@ P3SwapOut(int *frame)
                 void *addr;
                 rc = P3FrameMap(target, &addr);
                 assert(rc == P1_SUCCESS);
+
+                void *tempAddr = malloc(pageSize);
+                memcpy(tempAddr, addr, pageSize);
             
-                rc = P2_DiskWrite(P3_SWAP_DISK, getTrack(i),getSector(i), sectorInPage, addr);
+                USLOSS_Console("writing to disk in %d\n",i);
+                rc = P2_DiskWrite(P3_SWAP_DISK, getTrack(i), getSector(i), sectorInPage, tempAddr);
+                                
+                //printf("%d, i: %d / getTrack: %d / getSector: %d \n",rc,i,getTrack(i),getSector(i));
                 assert(rc == P1_SUCCESS);
+
+                free(tempAddr);
 
                 rc = P3FrameUnmap(target);
                 assert(rc == P1_SUCCESS);
@@ -376,7 +405,7 @@ P3SwapOut(int *frame)
                 assert(rc == P1_SUCCESS);
 
                 P3_vmStats.pageOuts += 1;
-                P3_vmStats.replaced += 1;
+                //P3_vmStats.replaced += 1;
 
                 rc = P1_V(vmStats);
                 assert(rc == P1_SUCCESS);
@@ -395,16 +424,21 @@ P3SwapOut(int *frame)
     rc = P3PageTableGet(pid, &pageTable);
     assert(rc == P1_SUCCESS);
 
-
     pageTable[frameTable[target].page].incore = 0;
-    pageTable[i].frame = -1;
+    //pageTable[i].frame = -1;
 
-    rc = P3PageTableSet(pid, pageTable);
-    assert(rc == P1_SUCCESS);
+    // rc = P3PageTableSet(pid, pageTable);
+    // assert(rc == P1_SUCCESS);
 
     frameTable[target].busy = 1;
     rc = P1_V(clockHand);
     assert(rc == P1_SUCCESS);
+
+    USLOSS_Console("SwapOut: %d\n", target);
+    printFrameTable();
+    printSwapTable();
+
+
     *frame = target;
 
 
@@ -493,8 +527,12 @@ P3SwapIn(int pid, int page, int frame)
                 rc = P3FrameMap(frame,&addr);
                 assert(rc == P1_SUCCESS);
 
-                rc = P2_DiskRead(P3_SWAP_DISK, getTrack(i), getSector(i), sectorInPage, addr);
+                void* tempAddr = malloc(pageSize);
+                memcpy(tempAddr, addr, pageSize);
+
+                rc = P2_DiskRead(P3_SWAP_DISK, getTrack(i), getSector(i), sectorInPage, tempAddr);
                 assert(rc == P1_SUCCESS);
+                free(tempAddr);
 
                 rc = P1_P(vmStats);
                 assert(rc == P1_SUCCESS);
@@ -561,6 +599,9 @@ P3SwapIn(int pid, int page, int frame)
     rc = P1_V(swapTableSem);
     assert(rc == P1_SUCCESS);
 
+    USLOSS_Console("SwapIn: %d %d %d\n", pid, page, frame);
+    printFrameTable();
+    printSwapTable();
 
     /*****************
 
@@ -579,4 +620,39 @@ P3SwapIn(int pid, int page, int frame)
     *****************/
 
     return result;
+}
+
+
+void printFrameTable() {
+
+    USLOSS_Console("Frame {\n");
+    for (i = 0; i < framesNum; i++) {
+
+        int pid  = frameTable[i].pid;
+        int page = frameTable[i].page;
+        int busy = frameTable[i].busy;
+        int acc =1 ; 
+        //rc = USLOSS_MmuGetAccess(hand,&acc);
+        //assert(rc == USLOSS_MMU_OK);
+        int ref = acc & 1;
+        int dir = acc & 2;
+
+
+        USLOSS_Console("\t%02d -> pid: %02d, page: %02d, busy: %d, ref:%d, dir: %d\n",i,pid,page,busy,ref,dir);
+    }
+    USLOSS_Console("}\n");
+}
+
+void printSwapTable() {
+
+    USLOSS_Console("Swap {\n");
+    for (i = 0; i < swapTableSize; i++) {
+
+        int pid  = swapTable[i].pid;
+        int page = swapTable[i].page;
+        int allocated = swapTable[i].allocated;
+
+        USLOSS_Console("\t%02d -> pid: %02d, page: %02d, allocated: %d\n",i,pid,page,allocated);
+    }
+    USLOSS_Console("}\n");
 }
