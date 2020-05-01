@@ -359,7 +359,7 @@ P3SwapOut(int *frame)
             int bit = access & USLOSS_MMU_REF;
             if (!bit) {
                 
-                frameTable[hand].busy = 1;
+                //frameTable[hand].busy = 1;
                 target = hand;
                 break;
             } else {
@@ -369,6 +369,8 @@ P3SwapOut(int *frame)
             }
         }
     } // while
+
+    USLOSS_Console("SwapOut: %d\n", target);
 
     int pid = frameTable[target].pid;
     int page = frameTable[target].page;
@@ -391,7 +393,6 @@ P3SwapOut(int *frame)
                 USLOSS_Console("writing to disk in %d\n",i);
                 rc = P2_DiskWrite(P3_SWAP_DISK, getTrack(i), getSector(i), sectorInPage, tempAddr);
                                 
-                //printf("%d, i: %d / getTrack: %d / getSector: %d \n",rc,i,getTrack(i),getSector(i));
                 assert(rc == P1_SUCCESS);
 
                 free(tempAddr);
@@ -434,9 +435,8 @@ P3SwapOut(int *frame)
     rc = P1_V(clockHand);
     assert(rc == P1_SUCCESS);
 
-    USLOSS_Console("SwapOut: %d\n", target);
-    printFrameTable();
-    printSwapTable();
+    //printFrameTable();
+    //printSwapTable();
 
 
     *frame = target;
@@ -493,6 +493,8 @@ int
 P3SwapIn(int pid, int page, int frame)
 {
 
+    USLOSS_Console("SwapIn: %d %d %d\n", pid, page, frame);
+
     int result = P1_SUCCESS;
 
     if (!initialized)
@@ -530,7 +532,9 @@ P3SwapIn(int pid, int page, int frame)
                 void* tempAddr = malloc(pageSize);
                 memcpy(tempAddr, addr, pageSize);
 
+                USLOSS_Console("Disk Reading: %d %d %d\n",pid, page, frame);
                 rc = P2_DiskRead(P3_SWAP_DISK, getTrack(i), getSector(i), sectorInPage, tempAddr);
+                memcpy(addr, tempAddr, pageSize);
                 assert(rc == P1_SUCCESS);
                 free(tempAddr);
 
@@ -599,9 +603,8 @@ P3SwapIn(int pid, int page, int frame)
     rc = P1_V(swapTableSem);
     assert(rc == P1_SUCCESS);
 
-    USLOSS_Console("SwapIn: %d %d %d\n", pid, page, frame);
-    printFrameTable();
-    printSwapTable();
+     //printFrameTable();
+    //printSwapTable();
 
     /*****************
 
